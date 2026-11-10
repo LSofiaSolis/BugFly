@@ -11,7 +11,7 @@ export type Activity = { text:string; date:string; comment?:boolean };
 export type Incident = Draft & { id:string; created:string; updated:string; resolved?:string; reporter:string; activity:Activity[] };
 export const demoNow = '2026-11-09T21:09:00';
 export const active = (item:Incident) => states.indexOf(item.status) < 2;
-export const dateLabel = (value:string) => new Intl.DateTimeFormat('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
+export const dateLabel = (value:string) => value && !Number.isNaN(Date.parse(value)) ? new Intl.DateTimeFormat('es',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : 'No disponible';
 const entries: [number,string,number,number,number,number,string][] = [
  [1087,'Error 502 intermitente en la API de pagos',0,0,1,1,'09T20:44'],
  [1086,'Falla la sincronización con el servicio de inventario',3,1,0,-1,'09T20:05'],

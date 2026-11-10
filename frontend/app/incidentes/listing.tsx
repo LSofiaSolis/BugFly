@@ -3,13 +3,14 @@ import Link from 'next/link';
 import {useEffect,useRef,useState} from 'react';
 import {Search,SlidersHorizontal,MoreHorizontal} from 'lucide-react';
 import {dateLabel,people,priorities,states,type Incident} from '../../lib/mock-data';
-import {mockIncidents} from '../../lib/incidents';
+import {demoMode,listIncidents,mockIncidents} from '../../lib/incidents';
 import {Avatar,Priority,Shell,Status,list,url,views} from '../ui';
 const columns=['ID','Incidente','Prioridad','Estado','Responsable','Creado'];
 const keyText=(text:string)=>text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
 export default function Listing({viewId,searchInitially}:{viewId:string;searchInitially:boolean}){
  const [items,setItems]=useState<Incident[]>([]);
  const [ready,setReady]=useState(false);
+ const [loadError,setLoadError]=useState('');
  const [query,setQuery]=useState('');
  const [term,setTerm]=useState('');
  const [filters,setFilters]=useState<string[]>([]);
@@ -18,7 +19,7 @@ export default function Listing({viewId,searchInitially}:{viewId:string;searchIn
  const [notice,setNotice]=useState('');
  const search=useRef<HTMLInputElement>(null);
  const rows=useRef<HTMLTableSectionElement>(null);
- useEffect(()=>{setItems(mockIncidents.list());setReady(true);if(searchInitially)search.current?.focus()},[searchInitially]);
+ useEffect(()=>{let alive=true;setReady(false);listIncidents().then(data=>{if(alive)setItems(data)}).catch(e=>{if(alive)setLoadError(e instanceof Error?e.message:'No se pudieron cargar los incidentes.')}).finally(()=>{if(alive)setReady(true)});if(searchInitially)search.current?.focus();return ()=>{alive=false}},[searchInitially]);
  useEffect(()=>{const timer=setTimeout(()=>{setTerm(query);setLimit(13)},150);return ()=>clearTimeout(timer)},[query]);
  useEffect(()=>{if(!notice)return;const timer=setTimeout(()=>setNotice(''),6000);return ()=>clearTimeout(timer)},[notice]);
  useEffect(()=>{
@@ -46,6 +47,7 @@ export default function Listing({viewId,searchInitially}:{viewId:string;searchIn
  });
  function clear(){setQuery('');setTerm('');setFilters([]);setLimit(13)}
  function assign(item:Incident){
+  if(!demoMode){setNotice('La asignación requiere un endpoint de actualización en FastAPI. No se guardaron cambios.');return}
   const next=items.map(i=>i.id===item.id?{...i,assignee:people[0],activity:[...i.activity,{date:i.updated,text:people[0]+' se asignó el incidente.'}]}:i);
   try{mockIncidents.save(next);setItems(next);setNotice(item.id+' se asignó a '+people[0]+'.')}catch{setNotice('No se pudo guardar la asignación.')}
  }
@@ -53,7 +55,7 @@ export default function Listing({viewId,searchInitially}:{viewId:string;searchIn
   const selected=options.filter(option=>filters.includes(option)).length;
   return <details className="popover"><summary className={'btn '+(selected?'selected':'')}><SlidersHorizontal size={13}/>{label}{selected>0&&<span className="count">{selected}</span>}</summary><div className="popover-body">{options.map(option=><label key={option}><input type="checkbox" checked={filters.includes(option)} onChange={e=>{setLimit(13);setFilters(e.target.checked?[...filters,option]:filters.filter(f=>f!==option))}}/>{option}<span className="mono muted ml-auto">{inView.filter(i=>i[field]===option).length}</span></label>)}</div></details>;
  }
- return <Shell items={items} view={view.id} title="Incidentes"><h1>Incidentes</h1><p className="muted mt-1 mb-5">Todo lo que el equipo está registrando, priorizando y resolviendo.</p>
+ return <Shell items={items} view={view.id} title="Incidentes">{loadError&&<div className="error-banner mb-4" role="alert">{loadError}</div>}<h1>Incidentes</h1><p className="muted mt-1 mb-5">Todo lo que el equipo está registrando, priorizando y resolviendo.</p>
  <nav className="tabs" aria-label="Vistas de incidentes">{views.filter(v=>v.id!=='mios'||view.id==='mios').map(v=><Link key={v.id} href={list(v.id)} aria-current={v.id===view.id?'page':undefined} onClick={clear}>{v.label} <span className="count">{items.filter(v.matches).length}</span></Link>)}</nav>
  <div className="toolbar"><label className="search"><Search size={15}/><input ref={search} value={query} onChange={e=>setQuery(e.target.value)} placeholder="Buscar incidentes…" aria-label="Buscar incidentes"/><kbd>/</kbd></label>{filter('Prioridad',priorities,'priority')}{filter('Estado',states,'status')}{(query||filters.length>0)&&<button className="btn" onClick={clear}>Limpiar filtros</button>}<span className="ml-auto muted text-xs">Ordenado por <b>{sort.index===5?'fecha de creación':columns[sort.index].toLowerCase()} {sort.descending?'↓':'↑'}</b></span></div>
  <section className="panel"><div className="table-scroll"><table className="incident-table full"><thead><tr>{columns.map((label,index)=><th key={label} aria-sort={sort.index===index?(sort.descending?'descending':'ascending'):'none'}><button onClick={()=>setSort({index,descending:sort.index===index?!sort.descending:index===0||index===5})}>{label} {sort.index===index&&<span className="text-[#3867d6]">{sort.descending?'↓':'↑'}</span>}</button></th>)}<th aria-label="Acciones"/></tr></thead>

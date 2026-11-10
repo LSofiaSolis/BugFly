@@ -5,7 +5,7 @@ import {useEffect,useRef,useState} from 'react';
 import {Check,ChevronLeft,ChevronRight,Link2,MessageSquare} from 'lucide-react';
 import Markdown from 'react-markdown';
 import {active,dateLabel,demoNow,hours,people,priorities,states,type Incident,type Status} from '../../../lib/mock-data';
-import {mockIncidents} from '../../../lib/incidents';
+import {demoMode,listIncidents,mockIncidents} from '../../../lib/incidents';
 import {Avatar,Panel,Priority,Shell,Status as StatusLabel,url} from '../../ui';
 import {Meter,sla} from '../../dashboard';
 type Notice={text:string;undo?:()=>void;error?:boolean};
@@ -13,6 +13,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
  const router=useRouter();
  const [items,setItems]=useState<Incident[]>([]);
  const [ready,setReady]=useState(false);
+ const [loadError,setLoadError]=useState('');
  const [comment,setComment]=useState('');
  const [note,setNote]=useState('');
  const [notice,setNotice]=useState<Notice|null>(null);
@@ -23,7 +24,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
  const index=neighbors.findIndex(i=>i.id===id);
  const before=neighbors[index-1];
  const after=neighbors[index+1];
- useEffect(()=>{setItems(mockIncidents.list());setReady(true);if(created){setNotice({text:'Incidente '+id+' creado.'});history.replaceState(history.state,'',url(id))}},[id,created]);
+ useEffect(()=>{let alive=true;setReady(false);listIncidents().then(data=>{if(alive)setItems(data)}).catch(e=>{if(alive)setLoadError(e instanceof Error?e.message:'No se pudo cargar el incidente.')}).finally(()=>{if(alive)setReady(true)});if(created){setNotice({text:'Incidente '+id+' creado.'});history.replaceState(history.state,'',url(id))}return ()=>{alive=false}},[id,created]);
  useEffect(()=>{if(!notice)return;const timer=setTimeout(()=>setNotice(null),6000);return ()=>clearTimeout(timer)},[notice]);
  useEffect(()=>{
   function keys(e:KeyboardEvent){
@@ -33,7 +34,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
   }
   window.addEventListener('keydown',keys);return ()=>window.removeEventListener('keydown',keys);
  },[after,before,router]);
- if(!item)return <Shell title={id} view="activos" items={items}><div className="panel empty"><h1>{ready?'Incidente no encontrado':'Cargando incidente…'}</h1>{ready&&<Link className="btn mt-4" href="/incidentes">Volver a incidentes</Link>}</div></Shell>;
+ if(!item)return <Shell title={id} view="activos" items={items}><div className="panel empty"><h1>{loadError|| (ready?'Incidente no encontrado':'Cargando incidente…')}</h1>{ready&&<Link className="btn mt-4" href="/incidentes">Volver a incidentes</Link>}</div></Shell>;
  const incident=item;
  const stage=states.indexOf(item.status);
  const target=hours[priorities.indexOf(item.priority)];
@@ -41,6 +42,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
  const actionText=active(item)?'Marcar como resuelto':'Reabrir incidente';
  function store(next:Incident[]){mockIncidents.save(next);setItems(next)}
  function update(changes:Partial<Incident>,text:string,event:string,extra?:string){
+  if(!demoMode){setNotice({text:'Esta acción requiere un endpoint de actualización en FastAPI. No se guardaron cambios.',error:true});return}
   const next={...incident,...changes,updated:demoNow,activity:[...incident.activity,{date:demoNow,text:event},...(extra?[{date:demoNow,text:extra,comment:true}]:[])]};
   try{
    store(mockIncidents.list().map(i=>i.id===id?next:i));
@@ -54,6 +56,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
  }
  function publish(){
   if(!comment.trim())return;
+  if(!demoMode){setNotice({text:'Los comentarios requieren un endpoint de FastAPI. No se publicó el comentario.',error:true});return}
   const next={...incident,updated:demoNow,activity:[...incident.activity,{date:demoNow,text:comment.trim(),comment:true}]};
   try{store(mockIncidents.list().map(i=>i.id===id?next:i));setComment('');setNotice({text:'Comentario publicado.'})}catch{setNotice({text:'No se pudo publicar el comentario.',error:true})}
  }
@@ -61,6 +64,7 @@ export default function Detail({id,created}:{id:string;created:boolean}){
  function resolution(){changeStatus(active(incident)?'Resuelto':'Abierto')}
  const navigation=<><span className="mono muted">{index+1} de {neighbors.length}</span>{before?<Link className="icon-btn" href={url(before.id)} aria-label="Anterior"><ChevronLeft size={16}/></Link>:<button className="icon-btn" disabled aria-label="Anterior"><ChevronLeft size={16}/></button>}{after?<Link className="icon-btn" href={url(after.id)} aria-label="Siguiente"><ChevronRight size={16}/></Link>:<button className="icon-btn" disabled aria-label="Siguiente"><ChevronRight size={16}/></button>}<button className="btn" onClick={async()=>{try{await navigator.clipboard.writeText(location.origin+url(id));setNotice({text:'Enlace copiado al portapapeles.'})}catch{setNotice({text:'No se pudo copiar el enlace.',error:true})}}}><Link2 size={14}/> Copiar enlace</button></>;
  return <Shell title={id} items={items} view="activos" actions={navigation}><div className="space-y-4">
+  {!demoMode&&<p className="muted text-xs">La API actual permite consultar y crear incidentes. Los cambios de estado, prioridad, responsable y comentarios necesitan endpoints adicionales para guardarse en PostgreSQL.</p>}
   <header><div className="flex flex-wrap items-center gap-2 mb-2"><Link className="id-chip" href={url(id)}>{id}</Link><Priority value={item.priority}/><span className="muted text-xs">{item.category} · creado por {item.reporter} el {dateLabel(item.created)}</span></div><h1>{item.title}</h1></header>
   <section className="panel"><div className="summary-grid"><div><p className="eyebrow mb-2">Estado</p><strong><StatusLabel value={item.status}/></strong><p className="muted mt-1">Actualizado el {dateLabel(item.updated)}</p></div><div><p className="eyebrow mb-2">Trabajando en ello</p><strong><Avatar name={item.assignee}/></strong><p className="muted mt-1">Equipo Plataforma</p></div><div><p className="eyebrow mb-2">Objetivo de resolución {target?'· '+target+' h':''}</p><strong>{objective.label}</strong><div className="my-2"><Meter item={item}/></div><p className="muted">{objective.due?'Vence el '+dateLabel(objective.due):'Prioridad sin plazo'}</p></div></div>
   <ol className="stepper">{states.map((s,i)=><li key={s} className={i<=stage?'reached':''} aria-current={i===stage?'step':undefined}><i/><span>{s}</span><small>{i===0?dateLabel(item.created):i===2&&item.resolved?dateLabel(item.resolved):i===stage?dateLabel(item.updated):'—'}</small></li>)}</ol></section>

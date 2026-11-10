@@ -2,17 +2,23 @@
 import Link from 'next/link';
 import {useEffect,useState} from 'react';
 import {active,categories,colors,dateLabel,demoNow,hours,priorities,seed,trend,type Incident} from '../lib/mock-data';
-import {mockIncidents} from '../lib/incidents';
+import {demoMode,listIncidents} from '../lib/incidents';
 import {Avatar,Panel,Priority,Shell,Status,list,url} from './ui';
 export function useIncidents(){
- const [items,setItems]=useState(seed);
- useEffect(()=>setItems(mockIncidents.list()),[]);
- return items;
+ const [items,setItems]=useState<Incident[]>(demoMode?seed:[]);
+ const [error,setError]=useState('');
+ useEffect(()=>{
+  let alive=true;
+  listIncidents().then(data=>{if(alive)setItems(data)}).catch(e=>{if(alive)setError(e instanceof Error?e.message:'No se pudo cargar el listado.')});
+  return ()=>{alive=false};
+ },[]);
+ return {items,error};
 }
 export function sla(item:Incident){
  const target=hours[priorities.indexOf(item.priority)];
  if(!target)return {fraction:0,label:'Sin objetivo',due:''};
- const elapsed=Date.parse(item.resolved??demoNow)-Date.parse(item.created);
+ if(!item.created||Number.isNaN(Date.parse(item.created)))return {fraction:0,label:'Sin fecha de creación',due:''};
+ const elapsed=Date.parse(item.resolved??(demoMode?demoNow:new Date().toISOString()))-Date.parse(item.created);
  const remaining=target*3600000-elapsed;
  const mins=Math.floor(Math.abs(item.resolved?elapsed:remaining)/60000);
  const duration=(mins>=60?Math.floor(mins/60)+' h ':'')+mins%60+' min';
@@ -23,19 +29,21 @@ export function Meter({item}:{item:Incident}){
  return <div className="meter"><span style={{width:Math.min(100,fraction*100)+'%',background:item.resolved?'#2e8b57':fraction>=1?'#ff7b72':fraction>=.5?'#f5b97a':'#7fa2f0'}}/></div>;
 }
 export default function Dashboard(){
- const items=useIncidents();
+ const {items,error}=useIncidents();
  const [period,setPeriod]=useState(14);
  const ongoing=items.filter(active);
  const critical=ongoing.filter(i=>i.priority==='Crítica').sort((a,b)=>sla(b).fraction-sla(a).fraction);
  const overdue=critical.filter(i=>sla(i).fraction>=1).length;
- const resolved=items.filter(i=>i.resolved&&Date.parse(demoNow)-Date.parse(i.resolved)<30*86400000);
+ const resolved=items.filter(i=>i.resolved&&Date.parse(demoMode?demoNow:new Date().toISOString())-Date.parse(i.resolved)<30*86400000);
  const average=resolved.length?Math.round(resolved.reduce((sum,i)=>sum+(Date.parse(i.resolved!)-Date.parse(i.created))/60000,0)/resolved.length):0;
  const days=Array.from({length:period},(_,i)=>{
-  const date=new Date(2026,10,10-period+i);
+  const base=demoMode?new Date(2026,10,9):new Date();
+  const date=new Date(base);
+  date.setDate(base.getDate()-period+1+i);
   const history=14-period+i;
-  const sameDay=(value:string)=>new Date(value).toDateString()===date.toDateString();
-  const created=(history>=0?trend.created[history]:items.filter(item=>sameDay(item.created)).length)+(i===period-1?items.filter(item=>Number(item.id.slice(3))>1087).length:0);
-  const closed=(history>=0?trend.resolved[history]:resolved.filter(item=>sameDay(item.resolved!)).length)+(i===period-1?resolved.filter(item=>item.resolved===demoNow).length:0);
+  const sameDay=(value:string)=>Boolean(value)&&!Number.isNaN(Date.parse(value))&&new Date(value).toDateString()===date.toDateString();
+  const created=demoMode?(history>=0?trend.created[history]:items.filter(item=>sameDay(item.created)).length)+(i===period-1?items.filter(item=>Number(item.id.slice(3))>1087).length:0):items.filter(item=>sameDay(item.created)).length;
+  const closed=demoMode?(history>=0?trend.resolved[history]:resolved.filter(item=>sameDay(item.resolved!)).length)+(i===period-1?resolved.filter(item=>item.resolved===demoNow).length:0):items.filter(item=>Boolean(item.resolved)&&sameDay(item.resolved!)).length;
   return {label:i===period-1?'Hoy':String(date.getDate()),created,closed};
  });
  const totalCreated=days.reduce((sum,d)=>sum+d.created,0);
@@ -47,7 +55,8 @@ export default function Dashboard(){
  const categoryCounts=categories.map(c=>({name:c,count:ongoing.filter(i=>i.category===c).length}));
  const max=Math.max(1,...categoryCounts.map(c=>c.count));
  return <Shell items={items} title="Panel" view="activos"><div className="space-y-4">
-  <header className="mb-5"><p className="eyebrow mb-2">Lunes 9 nov · 21:09</p><h1>{ongoing.length} incidentes activos. <span className="muted font-medium">En {period} días {net>0?'entraron '+net+' más de los que se resolvieron.':net<0?'se resolvieron '+Math.abs(net)+' más de los que entraron.':'se resolvieron tantos como entraron.'}</span></h1></header>
+  {error&&<div className="error-banner" role="alert">{error}</div>}
+  <header className="mb-5"><p className="eyebrow mb-2">{demoMode?'Lunes 9 nov · 21:09':new Intl.DateTimeFormat('es',{weekday:'long',day:'numeric',month:'short'}).format(new Date())}</p><h1>{ongoing.length} incidentes activos. <span className="muted font-medium">En {period} días {net>0?'entraron '+net+' más de los que se resolvieron.':net<0?'se resolvieron '+Math.abs(net)+' más de los que entraron.':'se resolvieron tantos como entraron.'}</span></h1></header>
   <section className="attention"><div className="mb-3 flex flex-wrap items-center gap-3"><span className={'signal '+(!critical.length?'healthy':'')}/><h2>{critical.length?'Requiere atención':'Sin incidentes críticos activos'}</h2>{!!critical.length&&<span className="eyebrow text-[#a9b6cc]">{critical.length} críticos · {overdue} SLA vencido · {critical.filter(i=>!i.assignee).length} sin responsable</span>}<Link className="ml-auto text-[#9db4eb]" href={list('criticos')}>Ver críticos →</Link></div>
    {!!critical.length&&<div className="attention-grid">{critical.map(i=><Link className="attention-card" href={url(i.id)} key={i.id}><div className="flex justify-between gap-2"><span className="mono text-[#9db4eb]">{i.id}</span><span className="text-[#a9b6cc]">{i.status}</span></div><p className="my-2 min-h-9 font-medium">{i.title}</p><div className="mb-2 flex flex-wrap justify-between gap-2"><Avatar name={i.assignee}/><span className="text-[#f5b97a]">{sla(i).label}</span></div><Meter item={i}/></Link>)}</div>}
   </section>
