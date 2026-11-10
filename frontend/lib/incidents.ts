@@ -1,8 +1,6 @@
 import {type Draft, type Incident, seed, people, demoNow, priorities, states, type Priority, type Status} from './mock-data';
 
 const key = 'bugfly:incidentes:v1';
-
-// El modo demo es explícito. En modo normal se utilizan los endpoints reales.
 export const demoMode = process.env.NEXT_PUBLIC_BUGFLY_MODE === 'demo';
 
 export const mockIncidents = {
@@ -16,23 +14,30 @@ export const mockIncidents = {
  },
 };
 
-// Campos que expone actualmente el servicio FastAPI.
-export type ApiDraft = { titulo:string; descripcion:string; gravedad:string; responsable:string };
-export type ApiIncident = ApiDraft & {
- id:number; estado?:string; categoria?:string;
- fecha_creacion?:string; fecha_actualizacion?:string; fecha_resolucion?:string;
+export type ApiDraft = { titulo:string; descripcion:string; gravedad:Priority; responsable:string|null };
+export type ApiIncident = {
+ id:number; titulo:string; descripcion:string|null; gravedad:Priority;
+ responsable:string|null; estado:Status; fecha_creacion:string; fecha_actualizacion:string;
 };
+export type ApiStatistics = {
+ total:number; por_estado:Record<Status,number>; por_gravedad:Record<Priority,number>;
+};
+type ApiUpdate = Partial<Pick<ApiIncident,'titulo'|'descripcion'|'gravedad'|'responsable'|'estado'>>;
 
-async function apiRequest<T>(init:RequestInit = {}):Promise<T> {
+async function apiRequest<T>(path:string,init:RequestInit = {}):Promise<T> {
  let response:Response;
  try {
-  response=await fetch('/api/bugfly/incidentes',{...init,cache:'no-store',headers:{Accept:'application/json',...init.headers}});
+  response=await fetch('/api/bugfly/'+path,{...init,cache:'no-store',headers:{Accept:'application/json',...init.headers}});
  } catch {
   throw new Error('No se pudo conectar con FastAPI. Comprueba que el servicio esté iniciado.');
  }
- if(!response.ok)throw new Error('FastAPI respondió con el código '+response.status+'. No se guardaron cambios.');
+ if(!response.ok){
+  let detail='';
+  try {const body=await response.json(); if(typeof body.detail==='string')detail=' '+body.detail;} catch {}
+  throw new Error('FastAPI respondió con el código '+response.status+'.'+detail);
+ }
  try{return await response.json() as T}
- catch{throw new Error('La respuesta del servicio de incidentes no es JSON válido.')}
+ catch{throw new Error('La respuesta de FastAPI no es JSON válido.')}
 }
 
 function fromApi(record:ApiIncident):Incident {
@@ -42,22 +47,36 @@ function fromApi(record:ApiIncident):Incident {
   id:'BF-'+record.id,
   title:record.titulo,
   description:record.descripcion??'',
-  category:record.categoria??'Sin categoría',
+  category:'Sin categoría',
   priority,status,
   assignee:record.responsable??'',
   reporter:'',
   created:record.fecha_creacion??'',
   updated:record.fecha_actualizacion??record.fecha_creacion??'',
-  resolved:record.fecha_resolucion??undefined,
   activity:[],
  };
 }
 
+function numericId(id:string):number {
+ const number=Number(id.replace(/^BF-/,''));
+ if(!Number.isInteger(number)||number<1)throw new Error('Identificador de incidente inválido.');
+ return number;
+}
+
 export async function listIncidents():Promise<Incident[]> {
  if(demoMode)return mockIncidents.list();
- const records=await apiRequest<ApiIncident[]>();
+ const records=await apiRequest<ApiIncident[]>('incidentes');
  if(!Array.isArray(records))throw new Error('FastAPI devolvió una lista de incidentes inválida.');
  return records.map(fromApi);
+}
+
+export async function getIncident(id:string):Promise<Incident> {
+ if(demoMode){
+  const found=mockIncidents.list().find(i=>i.id===id);
+  if(!found)throw new Error('Incidente no encontrado.');
+  return found;
+ }
+ return fromApi(await apiRequest<ApiIncident>('incidentes/'+numericId(id)));
 }
 
 export async function createIncident(draft:Draft):Promise<string> {
@@ -71,13 +90,38 @@ export async function createIncident(draft:Draft):Promise<string> {
   titulo:draft.title.trim(),
   descripcion:draft.description.trim(),
   gravedad:draft.priority,
-  responsable:draft.assignee,
+  responsable:draft.assignee||null,
  };
- const created=await apiRequest<{id:number;mensaje:string}>({
+ const created=await apiRequest<ApiIncident>('incidentes',{
   method:'POST',
   headers:{'Content-Type':'application/json'},
   body:JSON.stringify(payload),
  });
  if(!Number.isInteger(created.id))throw new Error('FastAPI no devolvió el ID del incidente creado.');
  return 'BF-'+created.id;
+}
+
+export async function updateIncident(id:string,changes:Partial<Incident>):Promise<Incident> {
+ const payload:ApiUpdate={};
+ if(changes.title!==undefined)payload.titulo=changes.title;
+ if(changes.description!==undefined)payload.descripcion=changes.description;
+ if(changes.priority!==undefined)payload.gravedad=changes.priority;
+ if(changes.status!==undefined)payload.estado=changes.status;
+ if(changes.assignee!==undefined)payload.responsable=changes.assignee||null;
+ if(!Object.keys(payload).length)throw new Error('No hay cambios que guardar.');
+ const updated=await apiRequest<ApiIncident>('incidentes/'+numericId(id),{
+  method:'PATCH',
+  headers:{'Content-Type':'application/json'},
+  body:JSON.stringify(payload),
+ });
+ return fromApi(updated);
+}
+
+export async function getStatistics():Promise<ApiStatistics> {
+ return apiRequest<ApiStatistics>('estadisticas');
+}
+
+export async function checkHealth():Promise<boolean> {
+ const data=await apiRequest<{status:string;base_de_datos:string}>('health');
+ return data.status==='ok'&&data.base_de_datos==='conectada';
 }

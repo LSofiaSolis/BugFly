@@ -3,7 +3,7 @@ import Link from 'next/link';
 import {useEffect,useRef,useState} from 'react';
 import {Search,SlidersHorizontal,MoreHorizontal} from 'lucide-react';
 import {dateLabel,people,priorities,states,type Incident} from '../../lib/mock-data';
-import {demoMode,listIncidents,mockIncidents} from '../../lib/incidents';
+import {demoMode,listIncidents,mockIncidents,updateIncident} from '../../lib/incidents';
 import {Avatar,Priority,Shell,Status,list,url,views} from '../ui';
 const columns=['ID','Incidente','Prioridad','Estado','Responsable','Creado'];
 const keyText=(text:string)=>text.toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu,'');
@@ -46,10 +46,17 @@ export default function Listing({viewId,searchInitially}:{viewId:string;searchIn
   return (typeof left==='number'&&typeof right==='number'?left-right:String(left).localeCompare(String(right),'es'))*(sort.descending?-1:1)||Date.parse(b.created)-Date.parse(a.created);
  });
  function clear(){setQuery('');setTerm('');setFilters([]);setLimit(13)}
- function assign(item:Incident){
-  if(!demoMode){setNotice('La asignación requiere un endpoint de actualización en FastAPI. No se guardaron cambios.');return}
-  const next=items.map(i=>i.id===item.id?{...i,assignee:people[0],activity:[...i.activity,{date:i.updated,text:people[0]+' se asignó el incidente.'}]}:i);
-  try{mockIncidents.save(next);setItems(next);setNotice(item.id+' se asignó a '+people[0]+'.')}catch{setNotice('No se pudo guardar la asignación.')}
+ async function assign(item:Incident){
+  if(demoMode){
+   const next=items.map(i=>i.id===item.id?{...i,assignee:people[0],activity:[...i.activity,{date:i.updated,text:people[0]+' se asignó el incidente.'}]}:i);
+   try{mockIncidents.save(next);setItems(next);setNotice(item.id+' se asignó a '+people[0]+'.')}catch{setNotice('No se pudo guardar la asignación.')}
+   return;
+  }
+  try{
+   const updated=await updateIncident(item.id,{assignee:people[0]});
+   setItems(current=>current.map(i=>i.id===item.id?updated:i));
+   setNotice(item.id+' se asignó a '+people[0]+'.');
+  }catch(e){setNotice(e instanceof Error?e.message:'No se pudo guardar la asignación.')}
  }
  function filter(label:string,options:readonly string[],field:'priority'|'status'){
   const selected=options.filter(option=>filters.includes(option)).length;
