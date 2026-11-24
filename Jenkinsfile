@@ -92,15 +92,15 @@ pipeline {
             steps {
                 script {
                     if (isUnix()) {
-                        sh """
+                        sh '''
                             docker compose -f "$COMPOSE_FILE" cp ci/verificar_incidente.py web:/tmp/verificar_incidente.py
                             docker compose -f "$COMPOSE_FILE" exec -T web python /tmp/verificar_incidente.py
-                        """
+                        '''
                     } else {
-                        bat """
+                        bat '''
                             docker compose -f "%COMPOSE_FILE%" cp ci/verificar_incidente.py web:/tmp/verificar_incidente.py
                             docker compose -f "%COMPOSE_FILE%" exec -T web python /tmp/verificar_incidente.py
-                        """
+                        '''
                     }
                 }
             }
